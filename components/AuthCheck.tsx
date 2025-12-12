@@ -1,43 +1,35 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { supabase } from '@/lib/supabase'
+import { useAuth } from '@/contexts/AuthContext'
 
-export default function AuthCheck({ children }: { children: React.ReactNode }) {
+interface AuthCheckProps {
+  children: React.ReactNode
+  redirectTo?: string
+}
+
+export default function AuthCheck({ children, redirectTo = '/login' }: AuthCheckProps) {
   const router = useRouter()
-  const [isLoading, setIsLoading] = useState(true)
-  const [isAuthenticated, setIsAuthenticated] = useState(false)
+  const { user, isLoading } = useAuth()
 
   useEffect(() => {
-    checkAuth()
-  }, [])
-
-  const checkAuth = async () => {
-    try {
-      const { data: { session } } = await supabase.auth.getSession()
-      
-      if (!session) {
-        router.push('/login')
-      } else {
-        setIsAuthenticated(true)
-      }
-    } catch (error) {
-      console.error('Auth check error:', error)
-      router.push('/login')
-    } finally {
-      setIsLoading(false)
+    if (!isLoading && !user) {
+      router.push(redirectTo)
     }
-  }
+  }, [user, isLoading, router, redirectTo])
 
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-xl">로딩 중...</div>
+      <div className="min-h-screen bg-neutral-950 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin w-10 h-10 border-3 border-orange-500 border-t-transparent rounded-full mx-auto mb-4"></div>
+          <p className="text-white/60">로딩 중...</p>
+        </div>
       </div>
     )
   }
 
-  if (!isAuthenticated) {
+  if (!user) {
     return null
   }
 

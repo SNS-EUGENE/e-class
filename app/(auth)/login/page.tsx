@@ -1,28 +1,52 @@
 'use client'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { useAuth } from '@/contexts/AuthContext'
 
 export default function LoginPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const { signIn, user, isLoading: authLoading } = useAuth()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
+  const [success, setSuccess] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+
+  // 이미 로그인된 경우 리다이렉트
+  useEffect(() => {
+    if (!authLoading && user) {
+      router.push('/courses')
+    }
+  }, [user, authLoading, router])
+
+  // 회원가입 완료 메시지
+  useEffect(() => {
+    if (searchParams.get('registered') === 'true') {
+      setSuccess('회원가입이 완료되었습니다. 로그인해주세요.')
+    }
+  }, [searchParams])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setIsLoading(true)
     setError('')
+    setSuccess('')
 
-    try {
-      // TODO: 실제 로그인 로직 연동
-      await new Promise(resolve => setTimeout(resolve, 1000))
-      router.push('/courses')
-    } catch {
-      setError('로그인에 실패했습니다. 이메일과 비밀번호를 확인해주세요.')
-    } finally {
+    const { error: signInError } = await signIn(email, password)
+
+    if (signInError) {
+      if (signInError.message.includes('Invalid login credentials')) {
+        setError('이메일 또는 비밀번호가 올바르지 않습니다.')
+      } else if (signInError.message.includes('Email not confirmed')) {
+        setError('이메일 인증이 필요합니다. 이메일을 확인해주세요.')
+      } else {
+        setError('로그인에 실패했습니다. 다시 시도해주세요.')
+      }
       setIsLoading(false)
+    } else {
+      router.push('/courses')
     }
   }
 
@@ -44,6 +68,11 @@ export default function LoginPage() {
           </p>
 
           <form onSubmit={handleSubmit} className="space-y-5">
+            {success && (
+              <div className="p-4 bg-green-500/10 border border-green-500/20 rounded-xl text-green-400 text-sm">
+                {success}
+              </div>
+            )}
             {error && (
               <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-xl text-red-400 text-sm">
                 {error}

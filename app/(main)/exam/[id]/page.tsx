@@ -1,86 +1,72 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { exams as examsApi, certificates as certificatesApi, courses as coursesApi, enrollments as enrollmentsApi } from '@/lib/supabase'
+import { useAuth } from '@/contexts/AuthContext'
 import { Header, Footer } from '@/components/layout'
-
-interface Question {
-  id: string
-  question: string
-  options: string[]
-  correctAnswer: number
-}
+import type { Exam, ExamQuestion, Course } from '@/types/database'
 
 export default function ExamPage() {
   const params = useParams()
   const router = useRouter()
+  const { user, isLoading: authLoading } = useAuth()
+  const [course, setCourse] = useState<Course | null>(null)
+  const [exam, setExam] = useState<(Exam & { questions: ExamQuestion[] }) | null>(null)
+  const [loading, setLoading] = useState(true)
   const [currentQuestion, setCurrentQuestion] = useState(0)
-  const [answers, setAnswers] = useState<(number | null)[]>([])
-  const [timeLeft, setTimeLeft] = useState(30 * 60) // 30분
+  const [answers, setAnswers] = useState<Record<string, number>>({})
+  const [timeLeft, setTimeLeft] = useState(0)
   const [examStarted, setExamStarted] = useState(false)
   const [examFinished, setExamFinished] = useState(false)
   const [score, setScore] = useState(0)
-
-  // 샘플 문제
-  const questions: Question[] = [
-    {
-      id: '1',
-      question: 'React에서 컴포넌트의 상태를 관리하기 위해 사용하는 Hook은?',
-      options: ['useEffect', 'useState', 'useContext', 'useReducer'],
-      correctAnswer: 1,
-    },
-    {
-      id: '2',
-      question: '다음 중 React의 Virtual DOM에 대한 설명으로 올바른 것은?',
-      options: [
-        '실제 DOM을 직접 조작한다',
-        '메모리에 가상의 DOM을 유지하여 변경사항을 비교한다',
-        'Virtual DOM은 브라우저에서만 동작한다',
-        'Virtual DOM은 React에서만 사용할 수 있다',
-      ],
-      correctAnswer: 1,
-    },
-    {
-      id: '3',
-      question: 'useEffect Hook의 두 번째 인자로 빈 배열([])을 전달하면 어떻게 동작하나요?',
-      options: [
-        '매 렌더링마다 실행된다',
-        '컴포넌트가 마운트될 때 한 번만 실행된다',
-        '상태가 변경될 때마다 실행된다',
-        '컴포넌트가 언마운트될 때만 실행된다',
-      ],
-      correctAnswer: 1,
-    },
-    {
-      id: '4',
-      question: 'React에서 리스트 렌더링 시 key prop이 필요한 이유는?',
-      options: [
-        '스타일링을 위해',
-        '이벤트 핸들링을 위해',
-        '효율적인 DOM 업데이트를 위해',
-        'SEO 최적화를 위해',
-      ],
-      correctAnswer: 2,
-    },
-    {
-      id: '5',
-      question: 'Next.js의 App Router에서 서버 컴포넌트의 기본 동작은?',
-      options: [
-        '모든 컴포넌트가 클라이언트에서 렌더링된다',
-        '모든 컴포넌트가 서버에서 렌더링된다',
-        "'use client'를 명시해야 서버에서 렌더링된다",
-        '기본적으로 서버에서 렌더링되며, 클라이언트 컴포넌트는 명시해야 한다',
-      ],
-      correctAnswer: 3,
-    },
-  ]
+  const [passed, setPassed] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
 
   useEffect(() => {
-    setAnswers(new Array(questions.length).fill(null))
-  }, [])
+    if (!authLoading && !user) {
+      router.push('/login')
+      return
+    }
 
+    if (user && params.id) {
+      checkEnrollmentAndFetchExam()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, authLoading, params.id])
+
+  const checkEnrollmentAndFetchExam = async () => {
+    try {
+      // 수강 확인
+      const { enrolled } = await enrollmentsApi.check(user!.id, params.id as string)
+      if (!enrolled) {
+        router.push(`/courses/${params.id}`)
+        return
+      }
+
+      // 코스 정보 가져오기
+      const { data: courseData } = await coursesApi.getById(params.id as string)
+      setCourse(courseData)
+
+      // 시험 정보 가져오기
+      const { data: examsData } = await examsApi.getByCourseId(params.id as string)
+      if (examsData && examsData.length > 0) {
+        const { data: examWithQuestions } = await examsApi.getById(examsData[0].id)
+        if (examWithQuestions) {
+          setExam(examWithQuestions)
+          setTimeLeft((examWithQuestions.time_limit_minutes || 30) * 60)
+        }
+      }
+    } catch (error) {
+      console.error('Error:', error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // 타이머
   useEffect(() => {
-    if (!examStarted || examFinished) return
+    if (!examStarted || examFinished || !exam) return
 
     const timer = setInterval(() => {
       setTimeLeft((prev) => {
@@ -94,7 +80,8 @@ export default function ExamPage() {
     }, 1000)
 
     return () => clearInterval(timer)
-  }, [examStarted, examFinished])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [examStarted, examFinished, exam])
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60)
@@ -103,24 +90,94 @@ export default function ExamPage() {
   }
 
   const handleAnswer = (optionIndex: number) => {
-    const newAnswers = [...answers]
-    newAnswers[currentQuestion] = optionIndex
-    setAnswers(newAnswers)
+    if (!exam) return
+    setAnswers(prev => ({
+      ...prev,
+      [exam.questions[currentQuestion].id]: optionIndex
+    }))
   }
 
-  const handleSubmit = () => {
-    let correct = 0
-    questions.forEach((q, i) => {
-      if (answers[i] === q.correctAnswer) {
-        correct++
+  const handleSubmit = useCallback(async () => {
+    if (!exam || !user || submitting) return
+
+    setSubmitting(true)
+
+    try {
+      // 점수 계산
+      let correct = 0
+      exam.questions.forEach((q) => {
+        if (answers[q.id] === q.correct_answer) {
+          correct++
+        }
+      })
+
+      const calculatedScore = Math.round((correct / exam.questions.length) * 100)
+      const hasPassed = calculatedScore >= exam.pass_score
+
+      // 결과 저장
+      const { data: result } = await examsApi.submitResult({
+        user_id: user.id,
+        exam_id: exam.id,
+        score: calculatedScore,
+        passed: hasPassed,
+        answers: answers,
+      })
+
+      // 합격시 수료증 발급
+      if (hasPassed && result) {
+        await certificatesApi.create(user.id, params.id as string, result.id)
       }
-    })
-    setScore(Math.round((correct / questions.length) * 100))
-    setExamFinished(true)
+
+      setScore(calculatedScore)
+      setPassed(hasPassed)
+      setExamFinished(true)
+    } catch (error) {
+      console.error('Error submitting exam:', error)
+      alert('시험 제출 중 오류가 발생했습니다.')
+    } finally {
+      setSubmitting(false)
+    }
+  }, [exam, user, answers, params.id, submitting])
+
+  const answeredCount = exam ? Object.keys(answers).length : 0
+
+  const resetExam = () => {
+    setExamStarted(false)
+    setExamFinished(false)
+    setCurrentQuestion(0)
+    setAnswers({})
+    setTimeLeft((exam?.time_limit_minutes || 30) * 60)
+    setScore(0)
+    setPassed(false)
   }
 
-  const answeredCount = answers.filter((a) => a !== null).length
+  if (loading || authLoading) {
+    return (
+      <div className="min-h-screen bg-neutral-950 text-white flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-10 h-10 border-3 border-orange-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+          <p className="text-white/60">로딩 중...</p>
+        </div>
+      </div>
+    )
+  }
 
+  if (!exam) {
+    return (
+      <div className="min-h-screen bg-neutral-950 text-white">
+        <Header />
+        <div className="flex flex-col items-center justify-center min-h-[60vh]">
+          <p className="text-white/60 mb-4">시험을 찾을 수 없습니다.</p>
+          <Link href={`/courses/${params.id}`} className="text-orange-400 hover:text-orange-300">
+            강의로 돌아가기
+          </Link>
+        </div>
+        <Footer />
+      </div>
+    )
+  }
+
+  // 시험 시작 전 안내 화면
   if (!examStarted) {
     return (
       <div className="min-h-screen bg-neutral-950 text-white">
@@ -135,22 +192,22 @@ export default function ExamPage() {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" />
                   </svg>
                 </div>
-                <h1 className="text-2xl font-bold mb-2">자격증 시험</h1>
-                <p className="text-white/50">React 실전 프로젝트 수료 시험</p>
+                <h1 className="text-2xl font-bold mb-2">{exam.title}</h1>
+                <p className="text-white/50">{course?.title}</p>
               </div>
 
               <div className="space-y-4 mb-8">
                 <div className="flex items-center justify-between py-3 border-b border-white/5">
                   <span className="text-white/50">문항 수</span>
-                  <span className="font-medium">{questions.length}문항</span>
+                  <span className="font-medium">{exam.questions.length}문항</span>
                 </div>
                 <div className="flex items-center justify-between py-3 border-b border-white/5">
                   <span className="text-white/50">제한 시간</span>
-                  <span className="font-medium">30분</span>
+                  <span className="font-medium">{exam.time_limit_minutes || 30}분</span>
                 </div>
                 <div className="flex items-center justify-between py-3 border-b border-white/5">
                   <span className="text-white/50">합격 기준</span>
-                  <span className="font-medium">80점 이상</span>
+                  <span className="font-medium">{exam.pass_score}점 이상</span>
                 </div>
                 <div className="flex items-center justify-between py-3">
                   <span className="text-white/50">응시 횟수</span>
@@ -180,9 +237,8 @@ export default function ExamPage() {
     )
   }
 
+  // 시험 결과 화면
   if (examFinished) {
-    const passed = score >= 80
-
     return (
       <div className="min-h-screen bg-neutral-950 text-white">
         <Header />
@@ -211,8 +267,8 @@ export default function ExamPage() {
               </h1>
               <p className="text-white/50 mb-8">
                 {passed
-                  ? '시험에 합격하셨습니다. 자격증이 발급되었습니다.'
-                  : '합격 기준(80점)에 미달했습니다. 다시 도전해보세요!'}
+                  ? '시험에 합격하셨습니다. 수료증이 발급되었습니다.'
+                  : `합격 기준(${exam.pass_score}점)에 미달했습니다. 다시 도전해보세요!`}
               </p>
 
               <div className="text-6xl font-bold mb-8">
@@ -223,18 +279,18 @@ export default function ExamPage() {
               <div className="grid grid-cols-3 gap-4 mb-8">
                 <div className="bg-white/[0.02] rounded-xl p-4">
                   <p className="text-sm text-white/40 mb-1">총 문항</p>
-                  <p className="text-xl font-semibold">{questions.length}</p>
+                  <p className="text-xl font-semibold">{exam.questions.length}</p>
                 </div>
                 <div className="bg-white/[0.02] rounded-xl p-4">
                   <p className="text-sm text-white/40 mb-1">정답</p>
                   <p className="text-xl font-semibold text-green-400">
-                    {Math.round((score / 100) * questions.length)}
+                    {Math.round((score / 100) * exam.questions.length)}
                   </p>
                 </div>
                 <div className="bg-white/[0.02] rounded-xl p-4">
                   <p className="text-sm text-white/40 mb-1">오답</p>
                   <p className="text-xl font-semibold text-red-400">
-                    {questions.length - Math.round((score / 100) * questions.length)}
+                    {exam.questions.length - Math.round((score / 100) * exam.questions.length)}
                   </p>
                 </div>
               </div>
@@ -251,17 +307,11 @@ export default function ExamPage() {
                     href="/mypage/certificates"
                     className="flex-1 py-4 bg-orange-500 hover:bg-orange-400 text-white font-semibold rounded-xl transition-all"
                   >
-                    자격증 확인
+                    수료증 확인
                   </Link>
                 ) : (
                   <button
-                    onClick={() => {
-                      setExamStarted(false)
-                      setExamFinished(false)
-                      setCurrentQuestion(0)
-                      setAnswers(new Array(questions.length).fill(null))
-                      setTimeLeft(30 * 60)
-                    }}
+                    onClick={resetExam}
                     className="flex-1 py-4 bg-orange-500 hover:bg-orange-400 text-white font-semibold rounded-xl transition-all"
                   >
                     다시 응시
@@ -277,15 +327,18 @@ export default function ExamPage() {
     )
   }
 
+  // 시험 진행 화면
+  const currentQ = exam.questions[currentQuestion]
+
   return (
     <div className="min-h-screen bg-neutral-950 text-white">
       {/* Exam Header */}
       <header className="fixed top-0 left-0 right-0 h-16 bg-neutral-900 border-b border-white/5 z-50">
         <div className="max-w-screen-xl mx-auto h-full px-5 flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <span className="text-sm text-white/50">자격증 시험</span>
+            <span className="text-sm text-white/50">{exam.title}</span>
             <span className="text-sm font-medium">
-              {currentQuestion + 1} / {questions.length}
+              {currentQuestion + 1} / {exam.questions.length}
             </span>
           </div>
 
@@ -300,7 +353,7 @@ export default function ExamPage() {
 
           <div className="flex items-center gap-2 text-sm">
             <span className="text-white/50">답변완료</span>
-            <span className="text-orange-400 font-medium">{answeredCount}/{questions.length}</span>
+            <span className="text-orange-400 font-medium">{answeredCount}/{exam.questions.length}</span>
           </div>
         </div>
       </header>
@@ -313,22 +366,22 @@ export default function ExamPage() {
               <span className="px-3 py-1 bg-orange-500/20 text-orange-400 text-sm font-medium rounded-full">
                 Q{currentQuestion + 1}
               </span>
-              {answers[currentQuestion] !== null && (
+              {answers[currentQ.id] !== undefined && (
                 <span className="px-3 py-1 bg-green-500/20 text-green-400 text-sm rounded-full">
                   답변 완료
                 </span>
               )}
             </div>
 
-            <h2 className="text-xl font-medium mb-8">{questions[currentQuestion].question}</h2>
+            <h2 className="text-xl font-medium mb-8">{currentQ.question}</h2>
 
             <div className="space-y-3">
-              {questions[currentQuestion].options.map((option, index) => (
+              {currentQ.options.map((option, index) => (
                 <button
                   key={index}
                   onClick={() => handleAnswer(index)}
                   className={`w-full p-4 rounded-xl text-left transition-all border ${
-                    answers[currentQuestion] === index
+                    answers[currentQ.id] === index
                       ? 'bg-orange-500/10 border-orange-500 text-white'
                       : 'bg-white/[0.02] border-white/5 text-white/70 hover:bg-white/[0.04] hover:text-white'
                   }`}
@@ -336,7 +389,7 @@ export default function ExamPage() {
                   <div className="flex items-center gap-4">
                     <span
                       className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium ${
-                        answers[currentQuestion] === index
+                        answers[currentQ.id] === index
                           ? 'bg-orange-500 text-white'
                           : 'bg-white/10'
                       }`}
@@ -354,14 +407,14 @@ export default function ExamPage() {
           <div className="bg-neutral-900 rounded-2xl p-6 border border-white/5">
             <p className="text-sm text-white/50 mb-4">문항 바로가기</p>
             <div className="flex flex-wrap gap-2">
-              {questions.map((_, index) => (
+              {exam.questions.map((q, index) => (
                 <button
-                  key={index}
+                  key={q.id}
                   onClick={() => setCurrentQuestion(index)}
                   className={`w-10 h-10 rounded-lg text-sm font-medium transition-all ${
                     currentQuestion === index
                       ? 'bg-orange-500 text-white'
-                      : answers[index] !== null
+                      : answers[q.id] !== undefined
                       ? 'bg-green-500/20 text-green-400 border border-green-500/30'
                       : 'bg-white/5 text-white/50 hover:bg-white/10'
                   }`}
@@ -385,17 +438,17 @@ export default function ExamPage() {
             이전 문항
           </button>
 
-          {currentQuestion === questions.length - 1 ? (
+          {currentQuestion === exam.questions.length - 1 ? (
             <button
               onClick={handleSubmit}
-              disabled={answeredCount < questions.length}
+              disabled={answeredCount < exam.questions.length || submitting}
               className="px-8 py-3 bg-green-500 hover:bg-green-400 text-white text-sm font-semibold rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              제출하기
+              {submitting ? '제출 중...' : '제출하기'}
             </button>
           ) : (
             <button
-              onClick={() => setCurrentQuestion(Math.min(questions.length - 1, currentQuestion + 1))}
+              onClick={() => setCurrentQuestion(Math.min(exam.questions.length - 1, currentQuestion + 1))}
               className="px-6 py-3 bg-orange-500 hover:bg-orange-400 text-white text-sm font-medium rounded-xl transition-all"
             >
               다음 문항

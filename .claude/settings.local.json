@@ -2,7 +2,11 @@
   "permissions": {
     "allow": [
       "Bash(npm run dev:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(npx tsc:*)",
+      "Bash(curl:*)",
+      "Bash(del \"c:\\한국SNS인재개발원\\eclass\\app\\admin\\layout.tsx\")"
     ]
   }
 }

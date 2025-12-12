@@ -2,6 +2,24 @@
 import { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
 import { Header, Footer } from '@/components/layout'
+import { courses as coursesApi } from '@/lib/supabase'
+import type { Course, Category } from '@/types/database'
+
+// 카테고리별 그라데이션 색상 (인라인 스타일용)
+const CATEGORY_COLORS = [
+  { from: '#2563eb', to: '#1e40af' }, // blue
+  { from: '#9333ea', to: '#6b21a8' }, // purple
+  { from: '#16a34a', to: '#166534' }, // green
+  { from: '#ea580c', to: '#9a3412' }, // orange
+  { from: '#db2777', to: '#9d174d' }, // pink
+]
+
+const getGradientStyle = (index: number) => {
+  const colors = CATEGORY_COLORS[index % CATEGORY_COLORS.length]
+  return {
+    background: `linear-gradient(to bottom right, ${colors.from}, ${colors.to})`
+  }
+}
 
 // 숫자 카운트업 훅
 function useCountUp(end: number, duration: number = 2000, suffix: string = '') {
@@ -58,41 +76,27 @@ export default function Home() {
   const classes = useCountUp(6000, 2000, '+')
   const satisfaction = useCountUp(98, 2000, '%')
 
-  const featuredCourses = [
-    {
-      id: 1,
-      title: '현직 개발자와 함께하는 React 실전 프로젝트',
-      instructor: '김개발',
-      thumbnail: 'https://images.unsplash.com/photo-1633356122544-f134324a6cee?w=600&h=400&fit=crop',
-      originalPrice: 198000,
-      salePrice: 89000,
-      discount: 55,
-      rating: 4.9,
-      reviews: 234,
-    },
-    {
-      id: 2,
-      title: '브랜딩부터 UX까지, 디자이너의 실무 노하우',
-      instructor: '이디자인',
-      thumbnail: 'https://images.unsplash.com/photo-1561070791-2526d30994b5?w=600&h=400&fit=crop',
-      originalPrice: 178000,
-      salePrice: 79000,
-      discount: 56,
-      rating: 4.8,
-      reviews: 189,
-    },
-    {
-      id: 3,
-      title: '데이터로 성과를 만드는 마케팅 전략 A to Z',
-      instructor: '박마케팅',
-      thumbnail: 'https://images.unsplash.com/photo-1460925895917-afdab827c52f?w=600&h=400&fit=crop',
-      originalPrice: 156000,
-      salePrice: 69000,
-      discount: 56,
-      rating: 4.7,
-      reviews: 156,
-    },
-  ]
+  const [featuredCourses, setFeaturedCourses] = useState<(Course & { category: Category | null })[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    const fetchCourses = async () => {
+      try {
+        const { data } = await coursesApi.getAll({ published: true, limit: 3 })
+        setFeaturedCourses(data || [])
+      } catch (error) {
+        console.error('Error fetching courses:', error)
+      } finally {
+        setLoading(false)
+      }
+    }
+    fetchCourses()
+  }, [])
+
+  const getDiscount = (original: number, sale?: number | null) => {
+    if (!sale || sale >= original) return 0
+    return Math.round((1 - sale / original) * 100)
+  }
 
   const features = [
     {
@@ -215,37 +219,82 @@ export default function Home() {
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-            {featuredCourses.map((course) => (
-              <Link
-                key={course.id}
-                href={`/courses/${course.id}`}
-                className="group block rounded-xl transition-all duration-300 hover:-translate-y-1"
-              >
-                <div className="relative aspect-[3/2] rounded-xl overflow-hidden mb-4 bg-neutral-900 shadow-lg shadow-black/30 group-hover:shadow-xl group-hover:shadow-black/40 transition-shadow">
-                  <img
-                    src={course.thumbnail}
-                    alt={course.title}
-                    className="w-full h-full object-cover opacity-90 group-hover:opacity-100 group-hover:scale-105 transition-all duration-500"
-                  />
-                </div>
-                <div>
-                  <p className="text-xs text-white/40 mb-1">{course.instructor}</p>
-                  <h3 className="text-[15px] font-medium leading-snug mb-2 group-hover:text-orange-400 transition-colors line-clamp-2">
-                    {course.title}
-                  </h3>
-                  <div className="flex items-center gap-2 text-xs text-white/40 mb-3">
-                    <span className="text-orange-400">★ {course.rating}</span>
-                    <span>·</span>
-                    <span>후기 {course.reviews}</span>
-                  </div>
-                  <div className="flex items-baseline gap-2">
-                    <span className="text-xs text-orange-400 font-medium">{course.discount}%</span>
-                    <span className="font-semibold">₩{course.salePrice.toLocaleString()}</span>
-                    <span className="text-xs text-white/30 line-through">₩{course.originalPrice.toLocaleString()}</span>
-                  </div>
-                </div>
-              </Link>
-            ))}
+            {loading ? (
+              <div className="col-span-3 flex justify-center py-10">
+                <div className="w-8 h-8 border-2 border-orange-500 border-t-transparent rounded-full animate-spin" />
+              </div>
+            ) : featuredCourses.length > 0 ? (
+              featuredCourses.map((course, index) => {
+                const discount = getDiscount(course.price, course.sale_price)
+                const displayPrice = course.sale_price || course.price
+
+                return (
+                  <Link
+                    key={course.id}
+                    href={`/courses/${course.id}`}
+                    className="group block rounded-xl transition-all duration-300 hover:-translate-y-1"
+                  >
+                    <div className="relative aspect-[3/2] rounded-xl overflow-hidden mb-4 bg-neutral-900 shadow-lg shadow-black/30 group-hover:shadow-xl group-hover:shadow-black/40 transition-shadow">
+                      {course.thumbnail_url ? (
+                        <img
+                          src={course.thumbnail_url}
+                          alt={course.title}
+                          className="w-full h-full object-cover opacity-90 group-hover:opacity-100 group-hover:scale-105 transition-all duration-500"
+                        />
+                      ) : (
+                        <div
+                          style={getGradientStyle(index)}
+                          className="w-full h-full flex items-center justify-center group-hover:scale-105 transition-all duration-500"
+                        >
+                          <div className="text-center">
+                            <svg className="w-12 h-12 text-white/40 mx-auto mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                            <span className="text-white/60 text-xs font-medium">{course.category?.name || '온라인 클래스'}</span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2 mb-1">
+                        {course.category && (
+                          <span className="text-xs text-orange-400">{course.category.name}</span>
+                        )}
+                        {course.instructor_name && (
+                          <>
+                            <span className="text-white/20">·</span>
+                            <span className="text-xs text-white/40">{course.instructor_name}</span>
+                          </>
+                        )}
+                      </div>
+                      <h3 className="text-[15px] font-medium leading-snug mb-3 group-hover:text-orange-400 transition-colors line-clamp-2">
+                        {course.title}
+                      </h3>
+                      <div className="flex items-baseline gap-2">
+                        {discount > 0 && (
+                          <span className="text-xs text-orange-400 font-medium">{discount}%</span>
+                        )}
+                        {displayPrice > 0 ? (
+                          <>
+                            <span className="font-semibold">₩{displayPrice.toLocaleString()}</span>
+                            {discount > 0 && (
+                              <span className="text-xs text-white/30 line-through">₩{course.price.toLocaleString()}</span>
+                            )}
+                          </>
+                        ) : (
+                          <span className="text-orange-400 font-medium">무료</span>
+                        )}
+                      </div>
+                    </div>
+                  </Link>
+                )
+              })
+            ) : (
+              <div className="col-span-3 text-center py-10 text-white/40">
+                등록된 클래스가 없습니다
+              </div>
+            )}
           </div>
         </div>
       </section>

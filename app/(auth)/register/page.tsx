@@ -1,10 +1,12 @@
 'use client'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
+import { useAuth } from '@/contexts/AuthContext'
 
 export default function RegisterPage() {
   const router = useRouter()
+  const { signUp, user, isLoading: authLoading } = useAuth()
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -14,6 +16,13 @@ export default function RegisterPage() {
   const [error, setError] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [agreeTerms, setAgreeTerms] = useState(false)
+
+  // 이미 로그인된 경우 리다이렉트
+  useEffect(() => {
+    if (!authLoading && user) {
+      router.push('/courses')
+    }
+  }, [user, authLoading, router])
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setFormData({ ...formData, [e.target.name]: e.target.value })
@@ -28,6 +37,11 @@ export default function RegisterPage() {
       return
     }
 
+    if (formData.password.length < 6) {
+      setError('비밀번호는 6자 이상이어야 합니다.')
+      return
+    }
+
     if (!agreeTerms) {
       setError('이용약관에 동의해주세요.')
       return
@@ -35,14 +49,19 @@ export default function RegisterPage() {
 
     setIsLoading(true)
 
-    try {
-      // TODO: 실제 회원가입 로직 연동
-      await new Promise(resolve => setTimeout(resolve, 1000))
-      router.push('/login?registered=true')
-    } catch {
-      setError('회원가입에 실패했습니다. 다시 시도해주세요.')
-    } finally {
+    const { error: signUpError } = await signUp(formData.email, formData.password, formData.name)
+
+    if (signUpError) {
+      if (signUpError.message.includes('already registered')) {
+        setError('이미 가입된 이메일입니다.')
+      } else if (signUpError.message.includes('Password')) {
+        setError('비밀번호가 보안 요구사항을 충족하지 않습니다.')
+      } else {
+        setError('회원가입에 실패했습니다. 다시 시도해주세요.')
+      }
       setIsLoading(false)
+    } else {
+      router.push('/login?registered=true')
     }
   }
 

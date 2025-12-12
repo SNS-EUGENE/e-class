@@ -1,7 +1,7 @@
 // Supabase Database Types for E-Class Platform
 // 실제 스키마 기반으로 정의
 
-export type UserRole = 'student' | 'instructor' | 'admin'
+export type UserRole = 'user' | 'student' | 'instructor' | 'admin'
 export type BannerType = 'banner' | 'popup'
 export type TransactionType = 'charge' | 'purchase' | 'refund' | 'bonus'
 
@@ -22,6 +22,7 @@ export interface Category {
   id: string
   name: string
   slug: string
+  description: string | null
   created_at: string
 }
 
